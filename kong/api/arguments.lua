@@ -59,6 +59,8 @@ end
 
 
 local defaults = {
+  decode        = true,
+  multipart     = true,
   timeout       = 1000,
   chunk_size    = 4096,
   max_uri_args  = 100,
@@ -66,6 +68,9 @@ local defaults = {
   max_line_size = nil,
   max_part_size = nil,
 }
+
+
+defaults.__index = defaults
 
 
 local function escape_unescaped_double_quotes(value)
@@ -162,6 +167,11 @@ local function content_type_boundary(content_type)
     else
       boundary = sub(content_type, e + 1)
     end
+
+    if (sub(boundary, 1, 1) == '"' and sub(boundary, -1)  == '"') or
+       (sub(boundary, 1, 1) == "'" and sub(boundary, -1)  == "'") then
+      boundary = sub(boundary, 2, -2)
+    end
   end
 
   if boundary ~= "" then
@@ -212,32 +222,58 @@ local function combine(args)
 end
 
 
-local function decode_value(value)
-  if type(value) == "string" then
-    if value == "" then
-      return ngx.null
-    end
+local function infer(args, schema)
+  if not args then
+    return
+  end
 
-    if value == "true" then
-      return true
-    end
+  if not schema then
+    return args
+  end
 
-    if value == "false" then
-      return false
-    end
+  for field_name, field in schema:each_field() do
+    local value = args[field_name]
+    if value then
+      if field.type == "number" or field.type == "integer" then
+        args[field_name] = tonumber(value) or value
 
-    local n = tonumber(value)
-    if n then
-      return n
-    end
+      elseif field.type == "boolean" then
+        if value == "true" then
+          args[field_name] = true
 
-  elseif type(value) == "table" then
-    for i, v in ipairs(value) do
-      value[i] = decode_value(v)
+        elseif value == "false" then
+          args[field_name] = false
+        end
+
+      elseif field.type == "array" or field.type == "set" then
+        if type(value) ~= "table" then
+          -- TODO: should we infer each item?
+          args[field_name] = { value }
+        end
+
+      elseif field.type == "string" then
+        if value == "" then
+          args[field_name] = ngx.null
+        end
+
+      elseif field.type == "foreign" then
+        if type(value) == "table" then
+          value = infer(value, field.schema)
+          if value then
+            args[field_name] = value
+          end
+        end
+
+      elseif field.type == "map" then
+        -- TODO: implement(?)
+
+      elseif field.type == "record" then
+        -- TODO: implement(?)
+      end
     end
   end
 
-  return value
+  return args
 end
 
 
@@ -358,7 +394,7 @@ local function decode_arg(name, value)
 end
 
 
-local function decode(args)
+local function decode(args, schema)
   local i = 0
   local r = {}
 
@@ -368,10 +404,10 @@ local function decode(args)
 
   for name, value in pairs(args) do
     i = i + 1
-    r[i] = decode_arg(name, decode_value(value))
+    r[i] = decode_arg(name, value)
   end
 
-  return combine(r)
+  return infer(combine(r), schema)
 end
 
 
@@ -514,12 +550,18 @@ end
 
 
 local function parse_multipart_header(header, results)
-  local name, value
+  local name
+  local value
 
   local boundary = find(header, "=", 1, true)
   if boundary then
-    name = sub(header, 2, boundary - 1)
+    name  = sub(header, 2, boundary - 1)
     value = sub(header, boundary + 2, -2)
+
+    if (sub(value, 1, 1) == '"' and sub(value, -1)  == '"') or
+       (sub(value, 1, 1) == "'" and sub(value, -1)  == "'") then
+      value = sub(value, 2, -2)
+    end
 
     if sub(name, -1) == "*" and lower(sub(value, 1, 7)) == "utf-8''" then
       name = sub(name, 1, -2)
@@ -564,25 +606,19 @@ local function parse_multipart_headers(headers)
 end
 
 
-local function parse_multipart(options, content_type)
-  local boundary
-
-  if content_type then
-    boundary = content_type_boundary(content_type)
-  end
-
+local function parse_multipart_stream(options, boundary)
   local part_args = {}
 
-  local max_part_size = options.max_part_size or defaults.max_part_size
-  local max_post_args = options.max_post_args or defaults.max_post_args
-  local chunk_size    = options.chunk_size    or defaults.chunk_size
+  local max_part_size = options.max_part_size
+  local max_post_args = options.max_post_args
+  local chunk_size    = options.chunk_size
 
-  local multipart, err = upload:new(chunk_size, options.max_line_size or defaults.max_line_size)
+  local multipart, err = upload:new(chunk_size, options.max_line_size)
   if not multipart then
     return nil, err
   end
 
-  multipart:set_timeout(options.timeout or defaults.timeout)
+  multipart:set_timeout(options.timeout)
 
   local parts_count = 0
 
@@ -707,19 +743,39 @@ local function parse_multipart(options, content_type)
     end
   end
 
+  multipart:read()
+
   return part_args
 end
 
 
-local function load(options)
-  options = options or defaults
+local function parse_multipart(options, content_type)
+  local boundary
+
+  if content_type then
+    boundary = content_type_boundary(content_type)
+  end
+
+  return parse_multipart_stream(options, boundary)
+end
+
+
+local function load(opts)
+  local options = setmetatable(opts or {}, defaults)
 
   local args  = setmetatable({
     uri  = {},
     post = {},
   }, arguments_mt)
 
-  args.uri = decode(get_uri_args(options.max_uri_args or defaults.max_uri_args))
+  local uargs = get_uri_args(options.max_uri_args)
+
+  if options.decode then
+    args.uri = decode(uargs, options.schema)
+
+  else
+    args.uri = uargs
+  end
 
   local content_length = ngx.var.content_length
   if content_length then
@@ -749,18 +805,28 @@ local function load(options)
 
   if sub(content_type, 1, 33) == "application/x-www-form-urlencoded" then
     req_read_body()
-    local pargs, err = get_post_args(options.max_post_args or defaults.max_post_args)
+    local pargs, err = get_post_args(options.max_post_args)
     if pargs then
-      args.post = decode(pargs)
+      if options.decode then
+        args.post = decode(pargs, options.schema)
+
+      else
+        args.post = pargs
+      end
 
     elseif err then
       log(NOTICE, err)
     end
 
-  elseif sub(content_type, 1, 19) == "multipart/form-data" then
+  elseif sub(content_type, 1, 19) == "multipart/form-data" and options.multipart then
     local pargs, err = parse_multipart(options, content_type)
     if pargs then
-      args.post = decode(pargs)
+      if options.decode then
+        args.post = decode(pargs, options.schema)
+
+      else
+        args.post = pargs
+      end
 
     elseif err then
       log(NOTICE, err)
@@ -782,6 +848,17 @@ local function load(options)
         log(NOTICE, err)
       end
     end
+
+  else
+    req_read_body()
+
+    -- we don't support file i/o in case the body is
+    -- buffered to a file, and that is how we want it.
+    local body_data = get_body_data()
+
+    if body_data then
+      args.body = body_data
+    end
   end
 
   return args
@@ -792,7 +869,6 @@ return {
   load         = load,
   decode       = decode,
   decode_arg   = decode_arg,
-  decode_value = decode_value,
   encode       = encode,
   encode_args  = encode,
   encode_value = encode_value,
