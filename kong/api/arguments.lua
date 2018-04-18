@@ -222,7 +222,65 @@ local function combine(args)
 end
 
 
-local function infer(args, schema)
+local infer
+
+
+local function infer_value(value, field)
+  if field.type == "number" or field.type == "integer" then
+    return tonumber(value) or value
+
+  elseif field.type == "boolean" then
+    if value == "true" then
+      return true
+
+    elseif value == "false" then
+      return false
+    end
+
+  elseif field.type == "array" or field.type == "set" then
+    if type(value) ~= "table" then
+      value = { value }
+    end
+
+    for i, item in ipairs(value) do
+      value[i] = infer_value(item, field.elements)
+    end
+    return value
+
+  elseif field.type == "string" then
+    if value == "" then
+      return ngx.null
+    end
+
+  elseif field.type == "foreign" then
+    if type(value) == "table" then
+      return infer(value, field.schema)
+    end
+
+  elseif field.type == "map" then
+    if type(value) ~= "table" then
+      return value
+    end
+
+    for k, v in pairs(value) do
+      value[k] = infer_value(v, field.elements)
+    end
+
+  elseif field.type == "record" then
+    if type(value) ~= "table" then
+      return value
+    end
+
+    for k, v in pairs(value) do
+      value[k] = infer_value(v, field.fields[k])
+    end
+  end
+
+  return value
+end
+
+
+infer = function(args, schema)
   if not args then
     return
   end
@@ -234,42 +292,7 @@ local function infer(args, schema)
   for field_name, field in schema:each_field() do
     local value = args[field_name]
     if value then
-      if field.type == "number" or field.type == "integer" then
-        args[field_name] = tonumber(value) or value
-
-      elseif field.type == "boolean" then
-        if value == "true" then
-          args[field_name] = true
-
-        elseif value == "false" then
-          args[field_name] = false
-        end
-
-      elseif field.type == "array" or field.type == "set" then
-        if type(value) ~= "table" then
-          -- TODO: should we infer each item?
-          args[field_name] = { value }
-        end
-
-      elseif field.type == "string" then
-        if value == "" then
-          args[field_name] = ngx.null
-        end
-
-      elseif field.type == "foreign" then
-        if type(value) == "table" then
-          value = infer(value, field.schema)
-          if value then
-            args[field_name] = value
-          end
-        end
-
-      elseif field.type == "map" then
-        -- TODO: implement(?)
-
-      elseif field.type == "record" then
-        -- TODO: implement(?)
-      end
+      args[field_name] = infer_value(value, field)
     end
   end
 
