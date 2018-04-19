@@ -1,12 +1,15 @@
-local Errors      = require "kong.db.errors"
-local responses   = require "kong.tools.responses"
-local utils       = require "kong.tools.utils"
-local app_helpers = require "lapis.application"
+local Errors       = require "kong.db.errors"
+local responses    = require "kong.tools.responses"
+local utils        = require "kong.tools.utils"
+local arguments    = require "kong.api.arguments"
+local app_helpers  = require "lapis.application"
 
 
-local escape_uri  = ngx.escape_uri
-local null        = ngx.null
-local fmt         = string.format
+
+local escape_uri   = ngx.escape_uri
+local unescape_uri = ngx.unescape_uri
+local null         = ngx.null
+local fmt          = string.format
 
 
 -- error codes http status codes
@@ -35,13 +38,14 @@ end
 local function get_first_unique_field_name(schema)
   for name, field in schema:each_field() do
     if field.unique then
-      return name
+      return name, field
     end
   end
 end
 
 
-local function select_entity(db, schema, id)
+local function select_entity(db, schema, params)
+  local id = unescape_uri(params[schema.name])
   if utils.is_valid_uuid(id) then
     local entity, _, err_t = db[schema.name]:select({ id = id })
     if entity or err_t then
@@ -49,10 +53,10 @@ local function select_entity(db, schema, id)
     end
   end
 
-  local unique_field_name = get_first_unique_field_name(schema)
-  if unique_field_name then
+  local name, field = get_first_unique_field_name(schema)
+  if name then
     local dao = db[schema.name]
-    return dao["select_by_" .. unique_field_name](dao, id)
+    return dao["select_by_" .. name](dao, arguments.infer_value(id, field))
   end
 end
 
@@ -88,7 +92,7 @@ local function get_collection_endpoint(schema, foreign_schema, foreign_field_nam
   end
 
   return function(self, db, helpers)
-    local parent_entity, _, err_t = select_entity(db, foreign_schema, self.params[foreign_schema.name])
+    local parent_entity, _, err_t = select_entity(db, foreign_schema, self.params)
     if err_t then
       return handle_error(err_t)
     end
@@ -106,7 +110,8 @@ local function get_collection_endpoint(schema, foreign_schema, foreign_field_nam
 
     local next_page
     if offset then
-      next_page = fmt("/%s/%s/%s?offset=%s", foreign_schema.name, escape_uri(parent_entity.id), schema.name, escape_uri(offset))
+      next_page = fmt("/%s/%s/%s?offset=%s", foreign_schema.name, escape_uri(parent_entity.id),
+                      schema.name, escape_uri(offset))
 
     else
       next_page = null
@@ -134,7 +139,7 @@ end
 local function post_collection_endpoint(schema, foreign_schema, foreign_field_name)
   return function(self, db, helpers)
     if foreign_schema then
-      local parent_entity, _, err_t = select_entity(db, foreign_schema, self.params[foreign_schema.name])
+      local parent_entity, _, err_t = select_entity(db, foreign_schema, foreign_schema.name)
       if err_t then
         return handle_error(err_t)
       end
@@ -168,7 +173,7 @@ end
 -- /services/:services
 local function get_entity_endpoint(schema, foreign_schema, foreign_field_name)
   return function(self, db, helpers)
-    local entity, _, err_t = select_entity(db, schema, self.params[schema.name])
+    local entity, _, err_t = select_entity(db, schema, self.params)
     if err_t then
       return handle_error(err_t)
     end
@@ -210,7 +215,7 @@ end
 -- /services/:services
 local function patch_entity_endpoint(schema, foreign_schema, foreign_field_name)
   return function(self, db, helpers)
-    local entity, _, err_t = select_entity(db, schema, self.params[schema.name])
+    local entity, _, err_t = select_entity(db, schema, self.params)
     if err_t then
       return handle_error(err_t)
     end
@@ -256,7 +261,7 @@ end
 -- /services/:services
 local function delete_entity_endpoint(schema, foreign_schema, foreign_field_name)
   return function(self, db, helpers)
-    local entity, _, err_t = select_entity(db, schema, self.params[schema.name])
+    local entity, _, err_t = select_entity(db, schema, self.params)
     if err_t then
       return handle_error(err_t)
     end
