@@ -35,28 +35,24 @@ local function handle_error(err_t)
 end
 
 
-local function get_first_unique_field_name(schema)
-  for name, field in schema:each_field() do
-    if field.unique then
-      return name, field
-    end
-  end
-end
-
-
 local function select_entity(db, schema, params)
+  local dao = db[schema.name]
+
   local id = unescape_uri(params[schema.name])
   if utils.is_valid_uuid(id) then
-    local entity, _, err_t = db[schema.name]:select({ id = id })
+    local entity, _, err_t = dao:select({ id = id })
     if entity or err_t then
       return entity, _, err_t
     end
   end
 
-  local name, field = get_first_unique_field_name(schema)
-  if name then
-    local dao = db[schema.name]
-    return dao["select_by_" .. name](dao, arguments.infer_value(id, field))
+  for name, field in schema:each_field() do
+    if field.unique then
+      local inferred_value = arguments.infer_value(id, field)
+      if schema:validate_field(field, inferred_value) then
+        return dao["select_by_" .. name](dao, inferred_value)
+      end
+    end
   end
 end
 
