@@ -27,7 +27,6 @@ local get_uri_args  = req.get_uri_args
 local get_body_data = req.get_body_data
 local get_post_args = req.get_post_args
 local json_decode   = cjson.decode
-local json_encode   = cjson.encode
 
 
 local NOTICE        = ngx.NOTICE
@@ -73,58 +72,6 @@ local defaults = {
 defaults.__index = defaults
 
 
-local function escape_unescaped_double_quotes(value)
-  if type(value) ~= "string" then
-    return nil
-  end
-
-  local s = find(value, '"', 1, true)
-
-  if not s then
-    return value
-  end
-
-  local r = {}
-  local i = 0
-  local p = 1
-
-  while s do
-    local escape = false
-    if s == 1 then
-      escape = true
-
-    else
-      local backslashes = 0
-
-      for n = s - 1, p, -1 do
-        if sub(value, n, n) ~= [[\]] then
-          break
-        end
-
-        backslashes = backslashes + 1
-      end
-
-      if backslashes % 2 == 0 then
-        escape = true
-      end
-    end
-
-    if escape then
-      r[i + 1] = sub(value, p, s - 1)
-      r[i + 2] = [[\"]]
-      i = i + 2
-      p = s + 1
-    end
-
-    s = find(value, '"', s + 1, true)
-  end
-
-  r[i + 1] = sub(value, p)
-
-  return concat(r)
-end
-
-
 local function basename(path, separator)
   if not path then
     return nil
@@ -152,7 +99,7 @@ local function basename(path, separator)
 end
 
 
-local function content_type_boundary(content_type)
+local function find_content_type_boundary(content_type)
   if not content_type then
     return nil
   end
@@ -226,6 +173,10 @@ local infer
 
 
 local function infer_value(value, field)
+  if not value or type(field) ~= "table" then
+    return value
+  end
+
   if field.type == "number" or field.type == "integer" then
     return tonumber(value) or value
 
@@ -239,13 +190,12 @@ local function infer_value(value, field)
 
   elseif field.type == "array" or field.type == "set" then
     if type(value) ~= "table" then
-      value = { value }
+      value = { infer_value(value, field.elements) }
     end
 
     for i, item in ipairs(value) do
       value[i] = infer_value(item, field.elements)
     end
-    return value
 
   elseif field.type == "string" then
     if value == "" then
@@ -258,21 +208,17 @@ local function infer_value(value, field)
     end
 
   elseif field.type == "map" then
-    if type(value) ~= "table" then
-      return value
-    end
-
-    for k, v in pairs(value) do
-      value[k] = infer_value(v, field.elements)
+    if type(value) == "table" then
+      for k, v in pairs(value) do
+        value[k] = infer_value(v, field.elements)
+      end
     end
 
   elseif field.type == "record" then
-    if type(value) ~= "table" then
-      return value
-    end
-
-    for k, v in pairs(value) do
-      value[k] = infer_value(v, field.fields[k])
+    if type(value) == "table" then
+      for k, v in pairs(value) do
+        value[k] = infer_value(v, field.fields[k])
+      end
     end
   end
 
@@ -431,144 +377,6 @@ local function decode(args, schema)
   end
 
   return infer(combine(r), schema)
-end
-
-
-local function encode_value(value)
-  if value == ngx.null then
-    return ""
-  end
-
-  if getmetatable(value) == multipart_mt then
-    return value
-  end
-
-  return tostring(value)
-end
-
-
-local function encode_args(args, results, prefix)
-  if type(args) ~= "table" then
-    return results
-  end
-
-  for k, v in pairs(args) do
-    local name
-
-    if prefix then
-      if type(k) == "number" then
-        name = fmt("%s[%d]", prefix, k)
-
-      else
-        if sub(prefix, -1) == "." then
-          name = prefix .. k
-
-        else
-          name = fmt("%s.%s", prefix, k)
-        end
-      end
-
-    else
-      if type(k) == "number" then
-        name = fmt("[%d]", prefix, k)
-
-      else
-        name = k
-      end
-    end
-
-    if type(v) == "table" and getmetatable(v) ~= multipart_mt then
-      encode_args(v, results, name)
-
-    else
-      results[name] = encode_value(v)
-    end
-  end
-
-  return results
-end
-
-
-local function encode(args, content_type)
-  if not content_type then
-    content_type = ngx.var.content_type
-
-    if not content_type then
-      return nil, "missing encoding content type"
-    end
-
-    if type(content_type) == "table" then
-      content_type = content_type[1]
-    end
-  end
-
-  if sub(content_type, 1, 33) == "application/x-www-form-urlencoded" then
-    return ngx.encode_args(encode_args(args, {}))
-
-  elseif sub(content_type, 1, 19) == "multipart/form-data" then
-    local boundary = content_type_boundary(content_type) or utils.random_string()
-
-    local encoded_args = encode_args(args, {})
-    local i = 0
-    local r = {}
-
-    for k, v in pairs(encoded_args) do
-      r[i + 1] = "\r\n--"
-      r[i + 2] = boundary
-      r[i + 3] = "\r\n"
-      r[i + 4] = 'Content-Disposition: form-data; name="'
-      r[i + 5] = escape_unescaped_double_quotes(k)
-      r[i + 6] = '"'
-
-      i = i + 6
-
-      if getmetatable(v) == multipart_mt then
-
-        if v.filename then
-          r[i + 1] = '" filename="'
-          r[i + 2] = escape_unescaped_double_quotes(v.filename)
-          r[i + 3] = '"\r\n'
-
-          i = i + 3
-        end
-
-        if v.type then
-          r[i + 1] = "Content-Type: "
-          r[i + 2] = v.type
-
-          i = i + 2
-        end
-
-        r[i + 1] = "\r\n\r\n"
-        r[i + 2] = v.data
-
-        i = i + 2
-
-      else
-        r[i + 1] = "\r\n\r\n"
-        r[i + 2] = v
-
-        i = i + 2
-      end
-    end
-
-    if i > 0 then
-      r[i + 1] = "\r\n--"
-      r[i + 2] = boundary
-      r[i + 3] = "--"
-
-      i = i + 3
-
-      return concat(r, nil, 1, i)
-    end
-
-    return ""
-
-  elseif sub(content_type, 1, 16) == "application/json" then
-    return json_encode(args)
-  end
-
-  return nil, "unsupported encoding content type '" .. content_type .. "'"
 end
 
 
@@ -776,7 +584,7 @@ local function parse_multipart(options, content_type)
   local boundary
 
   if content_type then
-    boundary = content_type_boundary(content_type)
+    boundary = find_content_type_boundary(content_type)
   end
 
   return parse_multipart_stream(options, boundary)
@@ -800,33 +608,14 @@ local function load(opts)
     args.uri = uargs
   end
 
-  local content_length = ngx.var.content_length
-  if content_length then
-    if type(content_length) == "table" then
-      content_length = content_length[1]
-    end
-
-    if content_length == "0" then
-      return args
-    end
-
-    content_length = tonumber(content_length)
-
-    if content_length and content_length < 1 then
-      return args
-    end
-  end
-
   local content_type = ngx.var.content_type
   if not content_type then
     return args
   end
 
-  if type(content_type) == "table" then
-    content_type = content_type[1]
-  end
+  local content_type_lower = lower(content_type)
 
-  if sub(content_type, 1, 33) == "application/x-www-form-urlencoded" then
+  if find(content_type_lower, "application/x-www-form-urlencoded", 1, true) == 1 then
     req_read_body()
     local pargs, err = get_post_args(options.max_post_args)
     if pargs then
@@ -841,7 +630,23 @@ local function load(opts)
       log(NOTICE, err)
     end
 
-  elseif sub(content_type, 1, 19) == "multipart/form-data" and options.multipart then
+  elseif find(content_type_lower, "application/json", 1, true) == 1 then
+    req_read_body()
+
+    -- we don't support file i/o in case the body is
+    -- buffered to a file, and that is how we want it.
+    local body_data = get_body_data()
+    if body_data then
+      local pargs, err = json_decode(body_data)
+      if pargs then
+        args.post = pargs
+
+      elseif err then
+        log(NOTICE, err)
+      end
+    end
+
+  elseif options.multipart and find(content_type_lower, "multipart/form-data", 1, true) == 1 then
     local pargs, err = parse_multipart(options, content_type)
     if pargs then
       if options.decode then
@@ -853,23 +658,6 @@ local function load(opts)
 
     elseif err then
       log(NOTICE, err)
-    end
-
-  elseif sub(content_type, 1, 16) == "application/json" then
-    req_read_body()
-
-    -- we don't support file i/o in case the body is
-    -- buffered to a file, and that is how we want it.
-    local body_data = get_body_data()
-
-    if body_data then
-      local pargs, err = json_decode(body_data)
-      if pargs then
-        args.post = pargs
-
-      elseif err then
-        log(NOTICE, err)
-      end
     end
 
   else
@@ -892,9 +680,8 @@ return {
   load         = load,
   decode       = decode,
   decode_arg   = decode_arg,
-  encode       = encode,
-  encode_args  = encode,
-  encode_value = encode_value,
+  infer        = infer,
+  infer_value  = infer_value,
   combine      = combine,
   multipart_mt = multipart_mt,
 }
