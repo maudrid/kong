@@ -5,7 +5,6 @@ local arguments    = require "kong.api.arguments"
 local app_helpers  = require "lapis.application"
 
 
-
 local escape_uri   = ngx.escape_uri
 local unescape_uri = ngx.unescape_uri
 local null         = ngx.null
@@ -54,6 +53,8 @@ local function select_entity(db, schema, params)
       end
     end
   end
+
+  return dao:select({ id = id })
 end
 
 
@@ -275,11 +276,7 @@ local function delete_entity_endpoint(schema, foreign_schema, foreign_field_name
       return helpers.responses.send_HTTP_NO_CONTENT()
 
     else
-      if not entity then
-        return helpers.responses.send_HTTP_NOT_FOUND()
-      end
-
-      local id = entity[foreign_field_name]
+      local id = entity and entity[foreign_field_name]
       if not id or id == null then
         return helpers.responses.send_HTTP_NOT_FOUND()
       end
@@ -324,7 +321,7 @@ local function generate_entity_endpoints(endpoints, schema, foreign_schema, fore
   end
 
   endpoints[entity_path] = {
-    schema  = schema,
+    schema  = foreign_schema or schema,
     methods = {
       --OPTIONS = method_not_allowed,
       --HEAD    = method_not_allowed,
@@ -361,7 +358,7 @@ local function generate_endpoints(schema, endpoints)
   for foreign_field_name, foreign_field in schema:each_field() do
     if foreign_field.type == "foreign" then
       -- e.g. /routes/:routes/service
-      generate_entity_endpoints(endpoints, schema, foreign_field.schema, foreign_field)
+      generate_entity_endpoints(endpoints, schema, foreign_field.schema, foreign_field_name)
 
       -- e.g. /services/:services/routes
       generate_collection_endpoints(endpoints, schema, foreign_field.schema, foreign_field_name)

@@ -189,8 +189,12 @@ local function infer_value(value, field)
     end
 
   elseif field.type == "array" or field.type == "set" then
+    if value == "" then
+      return ngx.null
+    end
+
     if type(value) ~= "table" then
-      value = { infer_value(value, field.elements) }
+      value = { value }
     end
 
     for i, item in ipairs(value) do
