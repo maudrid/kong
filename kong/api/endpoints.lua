@@ -148,6 +148,8 @@ local function post_collection_endpoint(schema, foreign_schema, foreign_field_na
       self.args.post[foreign_field_name] = { id = foreign_entity.id }
     end
 
+    self.args.post.id = nil
+
     local entity, _, err_t = db[schema.name]:insert(self.args.post)
     if err_t then
       return handle_error(err_t)
@@ -219,8 +221,17 @@ local function put_entity_endpoint(schema, foreign_schema, foreign_field_name)
       end
 
       if entity then
-        -- TODO: it is replace! (currently does patch)
-        entity, _, err_t = db[schema.name]:update({ id = entity.id }, self.args.post)
+        local args = schema:process_auto_fields(self.args.post, "insert")
+
+        for key, field in schema:each_field() do
+          if not args[key] then
+            args[key] = null
+          end
+        end
+
+        args.id = nil
+
+        entity, _, err_t = db[schema.name]:update({ id = entity.id }, args)
         if err_t then
           return handle_error(err_t)
         end
@@ -246,7 +257,7 @@ local function put_entity_endpoint(schema, foreign_schema, foreign_field_name)
             if field.unique then
               local inferred_value = arguments.infer_value(id, field)
               if schema:validate_field(field, inferred_value) then
-                self.args.post[name] = id
+                self.args.post[name] = inferred_value
                 entity, _, err_t = db[schema.name]:insert(self.args.post)
                 if err_t then
                   return handle_error(err_t)
@@ -258,6 +269,7 @@ local function put_entity_endpoint(schema, foreign_schema, foreign_field_name)
           end
 
           self.args.post.id = id
+
           local entity, _, err_t = db[schema.name]:insert(self.args.post)
           if err_t then
             return handle_error(err_t)
@@ -284,8 +296,17 @@ local function put_entity_endpoint(schema, foreign_schema, foreign_field_name)
       return helpers.responses.send_HTTP_NOT_FOUND()
     end
 
-    -- TODO: it is replace! (currently does patch)
-    entity, _, err_t = db[foreign_schema.name]:update(id, self.args.post)
+    local args = foreign_schema:process_auto_fields(self.args.post, "insert")
+
+    for key, field in foreign_schema:each_field() do
+      if not args[key] then
+        args[key] = null
+      end
+    end
+
+    args.id = nil
+
+    entity, _, err_t = db[foreign_schema.name]:update(id, args)
     if err_t then
       return handle_error(err_t)
     end

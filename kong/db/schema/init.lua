@@ -959,7 +959,7 @@ function Schema:process_auto_fields(input, context)
 
   for key, field in self:each_field() do
     if field.auto then
-      if field.uuid and context == "insert" then
+      if field.uuid and context == "insert" and output[key] == nil then
         output[key] = utils.uuid()
 
       elseif (key == "created_at" and (context == "insert")) or
