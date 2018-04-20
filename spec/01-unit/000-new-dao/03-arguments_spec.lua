@@ -1,10 +1,10 @@
 local arguments    = require "kong.api.arguments"
 
 
-local decode_value = arguments.decode_value
+--local decode_value = arguments.decode_value
 local decode       = arguments.decode
-local tonumber     = tonumber
-local null         = ngx.null
+--local tonumber     = tonumber
+--local null         = ngx.null
 
 
 --describe("arguments.decode_value", function()

@@ -1,12 +1,10 @@
 local cjson         = require "cjson.safe"
 local upload        = require "resty.upload"
-local utils         = require "kong.tools.utils"
 
 
 local setmetatable  = setmetatable
 local getmetatable  = getmetatable
 local tonumber      = tonumber
-local tostring      = tostring
 local rawget        = rawget
 local concat        = table.concat
 local insert        = table.insert
@@ -14,7 +12,6 @@ local ipairs        = ipairs
 local pairs         = pairs
 local lower         = string.lower
 local find          = string.find
-local fmt           = string.format
 local sub           = string.sub
 local type          = type
 local ngx           = ngx
