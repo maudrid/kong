@@ -45,13 +45,10 @@ local function select_entity(db, schema, params)
     end
   end
 
-  for name, field in schema:each_field() do
-    if field.unique then
-      local inferred_value = arguments.infer_value(id, field)
-      if schema:validate_field(field, inferred_value) then
-        return dao["select_by_" .. name](dao, inferred_value)
-      end
-    end
+  if schema.endpoint_key then
+    local field = schema.fields[schema.endpoint_key]
+    local inferred_value = arguments.infer_value(id, field)
+    return dao["select_by_" .. schema.endpoint_key](dao, inferred_value)
   end
 
   return dao:select({ id = id })
@@ -223,7 +220,7 @@ local function put_entity_endpoint(schema, foreign_schema, foreign_field_name)
       if entity then
         local args = schema:process_auto_fields(self.args.post, "insert")
 
-        for key, field in schema:each_field() do
+        for key, _ in schema:each_field() do
           if not args[key] then
             args[key] = null
           end
@@ -253,19 +250,16 @@ local function put_entity_endpoint(schema, foreign_schema, foreign_field_name)
 
           return helpers.responses.send_HTTP_CREATED(entity)
         else
-          for name, field in schema:each_field() do
-            if field.unique then
-              local inferred_value = arguments.infer_value(id, field)
-              if schema:validate_field(field, inferred_value) then
-                self.args.post[name] = inferred_value
-                entity, _, err_t = db[schema.name]:insert(self.args.post)
-                if err_t then
-                  return handle_error(err_t)
-                end
-
-                return helpers.responses.send_HTTP_CREATED(entity)
-              end
+          if schema.endpoint_key then
+            local field = schema.fields[schema.endpoint_key]
+            local inferred_value = arguments.infer_value(id, field)
+            self.args.post[schema.endpoint_key] = inferred_value
+            entity, _, err_t = db[schema.name]:insert(self.args.post)
+            if err_t then
+              return handle_error(err_t)
             end
+
+            return helpers.responses.send_HTTP_CREATED(entity)
           end
 
           self.args.post.id = id
