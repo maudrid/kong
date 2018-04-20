@@ -89,17 +89,17 @@ local function get_collection_endpoint(schema, foreign_schema, foreign_field_nam
   end
 
   return function(self, db, helpers)
-    local parent_entity, _, err_t = select_entity(db, foreign_schema, self.params)
+    local foreign_entity, _, err_t = select_entity(db, foreign_schema, self.params)
     if err_t then
       return handle_error(err_t)
     end
 
-    if not parent_entity then
+    if not foreign_entity then
       return helpers.responses.send_HTTP_NOT_FOUND()
     end
 
     local dao = db[schema.name]
-    local rows, _, err_t, offset = dao["for_" .. foreign_field_name](dao, { id = parent_entity.id },
+    local data, _, err_t, offset = dao["for_" .. foreign_field_name](dao, { id = foreign_entity.id },
                                                                      self.args.size, self.args.offset)
     if err_t then
       return handle_error(err_t)
@@ -107,7 +107,7 @@ local function get_collection_endpoint(schema, foreign_schema, foreign_field_nam
 
     local next_page
     if offset then
-      next_page = fmt("/%s/%s/%s?offset=%s", foreign_schema.name, escape_uri(parent_entity.id),
+      next_page = fmt("/%s/%s/%s?offset=%s", foreign_schema.name, escape_uri(foreign_entity.id),
                       schema.name, escape_uri(offset))
 
     else
@@ -115,7 +115,7 @@ local function get_collection_endpoint(schema, foreign_schema, foreign_field_nam
     end
 
     return helpers.responses.send_HTTP_OK {
-      data   = rows,
+      data   = data,
       offset = offset,
       next   = next_page,
     }
@@ -136,24 +136,24 @@ end
 local function post_collection_endpoint(schema, foreign_schema, foreign_field_name)
   return function(self, db, helpers)
     if foreign_schema then
-      local parent_entity, _, err_t = select_entity(db, foreign_schema, foreign_schema.name)
+      local foreign_entity, _, err_t = select_entity(db, foreign_schema, self.params)
       if err_t then
         return handle_error(err_t)
       end
 
-      if not parent_entity then
+      if not foreign_entity then
         return helpers.responses.send_HTTP_NOT_FOUND()
       end
 
-      self.args.post[foreign_field_name] = { id = parent_entity.id }
+      self.args.post[foreign_field_name] = { id = foreign_entity.id }
     end
 
-    local data, _, err_t = db[schema.name]:insert(self.args.post)
+    local entity, _, err_t = db[schema.name]:insert(self.args.post)
     if err_t then
       return handle_error(err_t)
     end
 
-    return helpers.responses.send_HTTP_CREATED(data)
+    return helpers.responses.send_HTTP_CREATED(entity)
   end
 end
 
@@ -193,6 +193,105 @@ local function get_entity_endpoint(schema, foreign_schema, foreign_field_name)
       if not entity then
         return helpers.responses.send_HTTP_NOT_FOUND()
       end
+    end
+
+    return helpers.responses.send_HTTP_OK(entity)
+  end
+end
+
+
+-- Generates admin api put entity endpoint functions
+--
+-- Examples:
+--
+-- /routes/:routes
+-- /routes/:routes/service
+--
+-- and
+--
+-- /services/:services
+local function put_entity_endpoint(schema, foreign_schema, foreign_field_name)
+  if not foreign_schema then
+    return function(self, db, helpers)
+      local entity, _, err_t = select_entity(db, schema, self.params)
+      if err_t then
+        return handle_error(err_t)
+      end
+
+      if entity then
+        -- TODO: it is replace! (currently does patch)
+        entity, _, err_t = db[schema.name]:update({ id = entity.id }, self.args.post)
+        if err_t then
+          return handle_error(err_t)
+        end
+
+        if not entity then
+          return helpers.responses.send_HTTP_NOT_FOUND()
+        end
+
+        return helpers.responses.send_HTTP_OK(entity)
+
+      else
+        local id = unescape_uri(self.params[schema.name])
+        if utils.is_valid_uuid(id) then
+          self.args.post.id = id
+          entity, _, err_t = db[schema.name]:insert(self.args.post)
+          if err_t then
+            return handle_error(err_t)
+          end
+
+          return helpers.responses.send_HTTP_CREATED(entity)
+        else
+          for name, field in schema:each_field() do
+            if field.unique then
+              local inferred_value = arguments.infer_value(id, field)
+              if schema:validate_field(field, inferred_value) then
+                self.args.post[name] = id
+                entity, _, err_t = db[schema.name]:insert(self.args.post)
+                if err_t then
+                  return handle_error(err_t)
+                end
+
+                return helpers.responses.send_HTTP_CREATED(entity)
+              end
+            end
+          end
+
+          self.args.post.id = id
+          local entity, _, err_t = db[schema.name]:insert(self.args.post)
+          if err_t then
+            return handle_error(err_t)
+          end
+
+          return helpers.responses.send_HTTP_CREATED(entity)
+        end
+      end
+    end
+  end
+
+  return function(self, db, helpers)
+    local entity, _, err_t = select_entity(db, schema, self.params)
+    if err_t then
+      return handle_error(err_t)
+    end
+
+    if not entity then
+      return helpers.responses.send_HTTP_NOT_FOUND()
+    end
+
+    local id = entity[foreign_field_name]
+    if not id or id == null then
+      return helpers.responses.send_HTTP_NOT_FOUND()
+    end
+
+    -- TODO: it is replace! (currently does patch)
+    entity, _, err_t = db[foreign_schema.name]:update(id, self.args.post)
+    if err_t then
+      return handle_error(err_t)
+    end
+
+    if not entity then
+      return helpers.responses.send_HTTP_NOT_FOUND()
     end
 
     return helpers.responses.send_HTTP_OK(entity)
@@ -327,7 +426,7 @@ local function generate_entity_endpoints(endpoints, schema, foreign_schema, fore
       --HEAD    = method_not_allowed,
       GET     = get_entity_endpoint(schema, foreign_schema, foreign_field_name),
       --POST    = method_not_allowed,
-      --PUT     = method_not_allowed,
+      PUT     = put_entity_endpoint(schema, foreign_schema, foreign_field_name),
       PATCH   = patch_entity_endpoint(schema, foreign_schema, foreign_field_name),
       DELETE  = delete_entity_endpoint(schema, foreign_schema, foreign_field_name),
     },
