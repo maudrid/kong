@@ -554,6 +554,9 @@ do
 
     local rows, err = self.connector:query(cql, args, opts, "read")
     if not rows then
+      if err:match("Invalid value for the paging state") then
+        return nil, self.errors:invalid_offset(offset, err)
+      end
       return nil, self.errors:database_error("could not execute page query: "
                                              .. err)
     end
