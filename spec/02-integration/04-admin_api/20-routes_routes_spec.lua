@@ -558,12 +558,20 @@ for _, strategy in helpers.each_strategy() do
             })
 
             local body = assert.res_status(200, res)
-            assert.matches('"methods":%[%]', body)
-            assert.matches('"paths":%[%]', body)
             local json = cjson.decode(body)
-            assert.same({}, json.paths)
+
+            if strategy == "cassandra" then
+              assert.equals(ngx.null, json.paths)
+              assert.equals(ngx.null, json.methods)
+
+            else
+              assert.matches('"methods":%[%]', body)
+              assert.matches('"paths":%[%]', body)
+              assert.same({}, json.paths)
+              assert.same({}, json.methods)
+            end
+
             assert.same({ "my-updated.tld" }, json.hosts)
-            assert.same({}, json.methods)
             assert.equal(route.id, json.id)
           end)
 
