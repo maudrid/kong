@@ -209,7 +209,7 @@ do
     -- Callback function that informs the healthchecker when targets are added
     -- or removed to a balancer.
     -- @param balancer the ring balancer object that triggers this callback.
-    -- @param context "added" or "removed"
+    -- @param action "added" or "removed"
     -- @param ip string
     -- @param port number
     -- @param hostname string
