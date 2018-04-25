@@ -4,9 +4,10 @@ local Entity = {}
 
 
 local entity_errors = {
-  NO_NILABLE = "Entities cannot have nilable types.",
-  MAP_KEY_STRINGS_ONLY = "Map keys must be strings",
-  AGGREGATE_ON_BASE_TYPES_ONLY = "Aggregates are allowed on base types only."
+  NO_NILABLE = "%s: entities cannot have nilable types",
+  MAP_KEY_STRINGS_ONLY = "%s: map keys must be strings",
+  AGGREGATE_ON_BASE_TYPES_ONLY = "%s: aggregates are allowed on base types only",
+  NO_EMPTY_AGGREGATES = "%s: aggregates cannot be empty",
 }
 
 
@@ -27,7 +28,7 @@ function Entity.new(definition)
 
   for name, field in self:each_field() do
     if field.nilable then
-      return nil, entity_errors.NO_NILABLE
+      return nil, entity_errors.NO_NILABLE:format(name)
     end
 
     if field.type == "map" then
@@ -37,10 +38,16 @@ function Entity.new(definition)
       if not base_types[field.values.type] then
         return nil, entity_errors.AGGREGATE_ON_BASE_TYPES_ONLY:format(name)
       end
+      if field.len_min == 0 then
+        return nil, entity_errors.NO_EMPTY_AGGREGATES:format(name)
+      end
 
     elseif field.type == "array" or field.type == "set" then
       if not base_types[field.elements.type] then
         return nil, entity_errors.AGGREGATE_ON_BASE_TYPES_ONLY:format(name)
+      end
+      if field.len_min == 0 then
+        return nil, entity_errors.NO_EMPTY_AGGREGATES:format(name)
       end
 
     elseif field.type == "record" then

@@ -42,6 +42,7 @@ local validation_errors = {
   BETWEEN                   = "value should be between %d and %d",
   LEN_EQ                    = "length must be %d",
   LEN_MIN                   = "length must be at least %d",
+  LEN_MIN_ZERO              = "length must be at least %d, use null to unset",
   LEN_MAX                   = "length must be at most %d",
   MATCH                     = "invalid value: %s",
   NOT_MATCH                 = "invalid value: %s",
@@ -137,7 +138,13 @@ Schema.validators = {
   end),
 
   len_min = make_length_validator("LEN_MIN", function(len, n)
-    return len >= n
+    if len < n then
+      if len == 0 then
+        return nil, validation_errors.LEN_MIN_ZERO:format(n)
+      end
+      return nil, validation_errors.LEN_MIN:format(n)
+    end
+    return true
   end),
 
   len_max = make_length_validator("LEN_MAX", function(len, n)
@@ -464,6 +471,10 @@ function Schema:validate_field(field, value)
     if not field.elements then
       return nil, validation_errors.SCHEMA_MISSING_ATTRIBUTE:format("elements")
     end
+    -- empty arrays are not accepted by default
+    if not field.len_min then
+      field.len_min = 1
+    end
 
     field.elements.nullable = false
     for _, v in ipairs(value) do
@@ -473,18 +484,16 @@ function Schema:validate_field(field, value)
       end
     end
 
-    for k, _ in pairs(value) do
-      if type(k) ~= "number" then
-        return nil, validation_errors.ARRAY
-      end
-    end
-
   elseif field.type == "set" then
     if not is_sequence(value) then
       return nil, validation_errors.SET
     end
     if not field.elements then
       return nil, validation_errors.SCHEMA_MISSING_ATTRIBUTE:format("elements")
+    end
+    -- empty sets are not accepted by default
+    if not field.len_min then
+      field.len_min = 1
     end
 
     field.elements.nullable = false
@@ -508,6 +517,10 @@ function Schema:validate_field(field, value)
     end
     if not field.values then
       return nil, validation_errors.SCHEMA_MISSING_ATTRIBUTE:format("values")
+    end
+    -- empty maps are not accepted by default
+    if not field.len_min then
+      field.len_min = 1
     end
 
     field.keys.nullable = false
