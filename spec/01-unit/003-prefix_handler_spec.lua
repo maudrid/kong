@@ -405,8 +405,8 @@ describe("NGINX conf compiler", function()
       assert(prefix_handler.prepare_prefix(conf))
 
       local in_prefix_kong_conf = assert(conf_loader(tmp_config.kong_env))
-      assert.True(in_prefix_kong_conf.plugins.foo)
-      assert.True(in_prefix_kong_conf.plugins.bar)
+      assert.True(in_prefix_kong_conf.loaded_plugins.foo)
+      assert.True(in_prefix_kong_conf.loaded_plugins.bar)
     end)
 
     describe("ssl", function()
