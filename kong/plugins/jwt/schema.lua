@@ -18,5 +18,6 @@ return {
     claims_to_verify = {type = "array", enum = {"exp", "nbf"}},
     anonymous = {type = "string", default = "", func = check_user},
     run_on_preflight = {type = "boolean", default = true},
+    inject_claims = {type = "array", default = {}},
   },
 }
